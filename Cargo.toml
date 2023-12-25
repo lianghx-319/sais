@@ -1,7 +1,7 @@
 [package]
 name = "sais"
 description = "Rust version of libsais"
-version = "0.0.1"
+version = "0.0.2"
 authors = ["Hanxx <xsytby1112@gmail.com>"]
 keywords = ["libsais", "libsais-rs", "sais"]
 documentation = "https://docs.rs/sais"

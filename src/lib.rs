@@ -1,116 +1,116 @@
 use rayon::prelude::*;
+use std::cmp::Ordering;
+use std::sync::Mutex;
 
 extern crate num_cpus;
 
 // A struct representing a suffix, consisting of a start index and a length
+#[derive(PartialEq, Eq)]
 struct Suffix<'a> {
     start_index: usize,
-    length: usize,
     text: &'a [u8],
 }
 
-impl<'a> Clone for Suffix<'a> {
-    fn clone(&self) -> Self {
-        Self {
-            start_index: self.start_index,
-            length: self.length,
-            text: self.text.clone(),
-        }
+impl<'a> PartialOrd for Suffix<'a> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.text[self.start_index..].partial_cmp(&other.text[other.start_index..])
     }
 }
 
-// A function for comparing two suffixes based on their corresponding substrings
-fn suffix_compare(s1: &Suffix, s2: &Suffix) -> std::cmp::Ordering {
-    s1.text[s1.start_index..]
-        .cmp(&s2.text[s2.start_index..])
-        .then_with(|| s1.length.cmp(&s2.length))
+impl<'a> Ord for Suffix<'a> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.text[self.start_index..].cmp(&other.text[other.start_index..])
+    }
 }
 
-// A function for constructing the suffix array in parallel using parallel multi-way mergesort
+// A function for constructing the suffix array in parallel
 pub fn construct_suffix_array_parallel(text: &[u8]) -> Vec<usize> {
-    // Construct an array of suffixes from the input text
-    let suffixes: Vec<Suffix> = (0..text.len())
+    let mut suffixes: Vec<_> = (0..text.len())
         .map(|i| Suffix {
             start_index: i,
-            length: text.len() - i,
             text,
         })
         .collect();
 
-    // Sort the suffixes in parallel using parallel multi-way mergesort
-    let num_threads = num_cpus::get();
-    let chunk_size = if suffixes.len() < num_threads {
-        suffixes.len()
-    } else {
-        suffixes.len() / num_threads
-    };
-    let sorted_suffixes: Vec<Vec<Suffix>> = suffixes
-        .par_chunks(chunk_size)
-        .map(|chunk| {
-            let mut sorted_chunk = chunk.to_vec();
-            // TODO: replace a more effective sort method
-            sorted_chunk.sort_by(suffix_compare);
-            sorted_chunk
-        })
+    suffixes.par_sort_unstable_by(|a, b| a.cmp(b));
+    // Sort the suffixes in parallel
+    let sorted_suffixes: Vec<_> = suffixes
+        .into_iter()
+        .map(|suffix| suffix.start_index)
         .collect();
 
-    // Merge the sorted suffixes together using parallel multi-way mergesort
-    let mut suffix_array: Vec<usize> = Vec::with_capacity(text.len());
-    let mut indices: Vec<usize> = vec![0; sorted_suffixes.len()];
-    while suffix_array.len() < text.len() {
-        let mut min_suffix: Option<&Suffix> = None;
-        let mut min_index: Option<usize> = None;
-        for (i, chunk) in sorted_suffixes.iter().enumerate() {
-            if indices[i] < chunk.len() {
-                let suffix = &chunk[indices[i]];
-                if min_suffix.is_none()
-                    || suffix_compare(suffix, min_suffix.unwrap()) == std::cmp::Ordering::Less
-                {
-                    min_suffix = Some(suffix);
-                    min_index = Some(i);
-                }
-            }
-        }
-        if let Some(suffix) = min_suffix {
-            suffix_array.push(suffix.start_index);
-            indices[min_index.unwrap()] += 1;
-        }
-    }
-
-    suffix_array
+    sorted_suffixes
 }
 
 pub fn lcp_array_parallel(sa: &[usize], a: &[u8]) -> Vec<usize> {
     let n = sa.len();
+    let mut lcp = vec![0; n - 1]; // One less than the length of the input
     let mut rank = vec![0; n];
-    // Compute rank array
+
     for i in 0..n {
         rank[sa[i]] = i;
     }
-    // Compute LCP array in parallel
-    (1..n)
-        .into_par_iter()
-        .map(|j| {
-            let mut h = 0;
-            let k = sa[rank[j] - 1];
-            while j + h < n && k + h < n && a[j + h] == a[k + h] {
+
+    let lcp_ref = Mutex::new(&mut lcp);
+    let rank_ref = &rank;
+
+    sa.par_iter().enumerate().skip(1).for_each(|(_i, &suf)| {
+        let rank = rank_ref[suf];
+        let prev_suf = sa[rank - 1];
+        let mut length = 0;
+        while suf + length < n && prev_suf + length < n && a[suf + length] == a[prev_suf + length] {
+            length += 1;
+        }
+        lcp_ref.lock().unwrap()[rank - 1] = length;
+    });
+
+    lcp
+}
+
+// Serial implementation of LCP array construction for validation
+pub fn lcp_array_serial(sa: &[usize], s: &[u8]) -> Vec<usize> {
+    let n = sa.len();
+    let mut lcp = vec![0; n - 1]; // One less than the number of suffixes
+    let mut rank = vec![0; n];
+
+    for i in 0..n {
+        rank[sa[i]] = i;
+    }
+
+    let mut h = 0;
+    for i in 0..n {
+        if rank[i] > 0 {
+            let k = sa[rank[i] - 1];
+            while i + h < n && k + h < n && s[i + h] == s[k + h] {
                 h += 1;
             }
-            h
-        })
-        .collect::<Vec<_>>()
+            lcp[rank[i] - 1] = h;
+            if h > 0 {
+                h -= 1;
+            }
+        }
+    }
+    lcp
 }
 
 #[cfg(test)]
 mod tests {
-    // Note this useful idiom: importing names from outer (for mod tests) scope.
     use super::*;
 
     #[test]
-    fn test_sa() {
-        let text = "banana";
-        let sa = construct_suffix_array_parallel(text.as_bytes());
-        println!("Suffix array for '{}': {:?}", text, sa);
+    fn test_construct_suffix_array_parallel() {
+        let text = "banana".as_bytes();
+        let sa = construct_suffix_array_parallel(text);
         assert_eq!(sa, vec![5, 3, 1, 0, 4, 2]);
+    }
+
+    #[test]
+    fn test_lcp_array_parallel() {
+        let text = "banana".as_bytes();
+        let sa = construct_suffix_array_parallel(text);
+        let lcp_parallel = lcp_array_parallel(&sa, text);
+        let lcp_serial = lcp_array_serial(&sa, text);
+        // The expected LCP array for "banana" with sa [5, 3, 1, 0, 4, 2] is [1, 3, 0, 0, 2]
+        assert_eq!(lcp_parallel, lcp_serial); // The last element is always 0 as there is no suffix after the last one.
     }
 }
