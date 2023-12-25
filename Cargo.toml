@@ -1,9 +1,19 @@
 [package]
 name = "sais"
+description = "Rust version of libsais"
 version = "0.0.1"
+authors = ["Hanxx <xsytby1112@gmail.com>"]
+keywords = ["libsais", "libsais-rs", "sais"]
+documentation = "https://docs.rs/sais"
+homepage = "https://github.com/lianghx-319/sais"
+repository = "https://github.com/lianghx-319/sais"
+license = "MIT"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "sais"
+bench = false
 
 [dependencies]
 num_cpus = "1.15.0"
